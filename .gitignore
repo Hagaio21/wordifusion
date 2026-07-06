@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+data/
+checkpoints/
+samples/
+logs_*.txt
+*.png
+memory/

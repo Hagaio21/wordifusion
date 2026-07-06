@@ -1,0 +1,5 @@
+# Install torch separately with the right CUDA build for your machine.
+# This project was developed against torch 2.5.1+cu121 in the `tq` conda env.
+torch>=2.5
+numpy>=1.26
+pillow>=10.0
