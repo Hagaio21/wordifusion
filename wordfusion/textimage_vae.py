@@ -76,6 +76,7 @@ class TextEncoder(nn.Module):
         self.pos = nn.Embedding(max_len, dim)
         self.encoder = _transformer(dim, layers, heads)
         self.queries = nn.Parameter(torch.randn(hw * hw, dim) * 0.02)
+        self.q_norm = nn.LayerNorm(dim)
         self.cross = nn.MultiheadAttention(dim, heads, batch_first=True)
         self.latent = _transformer(dim, max(1, layers // 2), heads)
         self.norm = nn.LayerNorm(dim)
@@ -88,7 +89,8 @@ class TextEncoder(nn.Module):
         h = self.tok(tokens) + self.pos(pos)[None]
         h = self.encoder(h, src_key_padding_mask=pad_mask)
         q = self.queries.expand(B, -1, -1)           # (B, hw*hw, dim)
-        a, _ = self.cross(q, h, h, key_padding_mask=pad_mask)
+        attn, _ = self.cross(self.q_norm(q), h, h, key_padding_mask=pad_mask)
+        a = q + attn                                 # residual: direct gradient to queries
         a = self.latent(a)
         m = self.head(self.norm(a))                  # (B, hw*hw, 2*latent_ch)
         m = m.transpose(1, 2).reshape(B, 2 * self.latent_ch, self.hw, self.hw)
@@ -109,6 +111,7 @@ class TextDecoder(nn.Module):
         self.proj = nn.Linear(latent_ch, dim)
         self.latent_pos = nn.Parameter(torch.randn(hw * hw, dim) * 0.02)
         self.out_pos = nn.Embedding(max_len, dim)
+        self.q_norm = nn.LayerNorm(dim)
         self.cross = nn.MultiheadAttention(dim, heads, batch_first=True)
         self.decoder = _transformer(dim, layers, heads)
         self.norm = nn.LayerNorm(dim)
@@ -122,7 +125,8 @@ class TextDecoder(nn.Module):
         lat = self.proj(lat) + self.latent_pos[None]         # (B, hw*hw, dim)
         pos = torch.arange(L, device=z.device)
         q = self.out_pos(pos)[None].expand(B, -1, -1)        # (B, L, dim)
-        a, _ = self.cross(q, lat, lat)                       # (B, L, dim)
+        attn, _ = self.cross(self.q_norm(q), lat, lat)       # (B, L, dim)
+        a = q + attn                                         # residual
         a = self.decoder(a)
         return self.head(self.norm(a))                       # (B, L, vocab)
 

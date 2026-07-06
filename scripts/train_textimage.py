@@ -114,7 +114,13 @@ def main():
                     help="continue from --ckpt if it exists (model+optimizer+step)")
     ap.add_argument("--amp", action="store_true",
                     help="mixed-precision fp16 (faster + less memory on T4)")
+    ap.add_argument("--max_len", type=int, default=cfg.text_max_len,
+                    help="override sequence length (lower = easier to train)")
+    ap.add_argument("--random_frac", type=float, default=cfg.ti_random_frac,
+                    help="fraction of random-char windows (lower = easier)")
     args = ap.parse_args()
+    cfg.text_max_len = args.max_len
+    cfg.ti_random_frac = args.random_frac
 
     device = cfg.device if torch.cuda.is_available() else "cpu"
     torch.manual_seed(cfg.seed)
