@@ -109,6 +109,9 @@ def main():
     ap.add_argument("--sample_every", type=int, default=250)
     ap.add_argument("--sample_dir", type=str, default="samples/ti")
     ap.add_argument("--ckpt", type=str, default="checkpoints/textimage_vae.pt")
+    ap.add_argument("--save_every", type=int, default=500)
+    ap.add_argument("--resume", action="store_true",
+                    help="continue from --ckpt if it exists (model+optimizer+step)")
     args = ap.parse_args()
 
     device = cfg.device if torch.cuda.is_available() else "cpu"
@@ -127,6 +130,19 @@ def main():
     model = TextImageVAE(cfg, vocab=VOCAB).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
+
+    def save_ckpt(step):
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
+                    "step": step, "cfg": vars(cfg)}, args.ckpt)
+
+    start_step = 0
+    if args.resume and os.path.exists(args.ckpt):
+        ck = torch.load(args.ckpt, map_location=device)
+        model.load_state_dict(ck["model"])
+        if "opt" in ck:
+            opt.load_state_dict(ck["opt"])
+        start_step = int(ck.get("step", 0))
+        print(f"resumed from {args.ckpt} at step {start_step}")
 
     os.makedirs(args.sample_dir, exist_ok=True)
     # FIXED watch-set: real text of varied lengths + a couple random-char windows,
@@ -147,11 +163,13 @@ def main():
     t0 = time.time()
     run = {}
     seen = 0
-    dump_samples(model, sample_tokens, 0, args.sample_dir, cfg, device)  # starting point
+    if start_step == 0:
+        dump_samples(model, sample_tokens, 0, args.sample_dir, cfg, device)  # starting point
     print(f"samples -> {args.sample_dir}/  (ti_stepNNNNNN.png + .txt every {args.sample_every} steps)")
 
-    bar = tqdm(total=args.steps, dynamic_ncols=True, smoothing=0.1)
-    for step, idx in enumerate(dl, 1):
+    bar = tqdm(total=args.steps, initial=start_step, dynamic_ncols=True, smoothing=0.1)
+    for local_step, idx in enumerate(dl, 1):
+        step = start_step + local_step
         tokens = idx.reshape(idx.size(0), -1).to(device, non_blocking=True)  # (B, T)
         opt.zero_grad(set_to_none=True)
         out = model(tokens, quantize=cfg.ti_quantize, img_noise=cfg.ti_img_noise)
@@ -181,16 +199,16 @@ def main():
         if step % args.sample_every == 0:
             dump_samples(model, sample_tokens, step, args.sample_dir, cfg, device)
             bar.write(f"  -> wrote sample ti_step{step:06d}.png/.txt")
-        if step % 500 == 0:
-            torch.save({"model": model.state_dict(), "cfg": vars(cfg)}, args.ckpt)
+        if step % args.save_every == 0:
+            save_ckpt(step)
         if step >= args.steps:
             break
     bar.close()
 
-    torch.save({"model": model.state_dict(), "cfg": vars(cfg)}, args.ckpt)
-    at, ai = dump_samples(model, sample_tokens, args.steps, args.sample_dir, cfg, device)
+    save_ckpt(step)
+    at, ai = dump_samples(model, sample_tokens, step, args.sample_dir, cfg, device)
     print(f"saved {args.ckpt}  |  final sample acc_t={at:.3f} acc_i={ai:.3f}  "
-          f"-> {args.sample_dir}/ti_step{args.steps:06d}.png")
+          f"-> {args.sample_dir}/ti_step{step:06d}.png")
 
 
 if __name__ == "__main__":
