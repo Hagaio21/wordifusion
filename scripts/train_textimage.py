@@ -112,6 +112,8 @@ def main():
     ap.add_argument("--save_every", type=int, default=500)
     ap.add_argument("--resume", action="store_true",
                     help="continue from --ckpt if it exists (model+optimizer+step)")
+    ap.add_argument("--amp", action="store_true",
+                    help="mixed-precision fp16 (faster + less memory on T4)")
     args = ap.parse_args()
 
     device = cfg.device if torch.cuda.is_available() else "cpu"
@@ -159,6 +161,9 @@ def main():
           f"max_len={cfg.text_max_len}  vocab={VOCAB}(ascii)  "
           f"rand_frac={cfg.ti_random_frac}  batch={args.batch}")
 
+    use_amp = args.amp and device == "cuda"
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
     model.train()
     t0 = time.time()
     run = {}
@@ -172,11 +177,15 @@ def main():
         step = start_step + local_step
         tokens = idx.reshape(idx.size(0), -1).to(device, non_blocking=True)  # (B, T)
         opt.zero_grad(set_to_none=True)
-        out = model(tokens, quantize=cfg.ti_quantize, img_noise=cfg.ti_img_noise)
-        loss, m = ti_loss(out, tokens, cfg)
-        loss.backward()
+        with torch.autocast(device_type=("cuda" if device == "cuda" else "cpu"),
+                            dtype=torch.float16, enabled=use_amp):
+            out = model(tokens, quantize=cfg.ti_quantize, img_noise=cfg.ti_img_noise)
+            loss, m = ti_loss(out, tokens, cfg)
+        scaler.scale(loss).backward()
+        scaler.unscale_(opt)
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        opt.step()
+        scaler.step(opt)
+        scaler.update()
 
         for k, v in m.items():
             run[k] = run.get(k, 0.0) + v.item()

@@ -218,7 +218,8 @@ def ti_loss(out, tokens, cfg):
     ce_t = masked_ce(out["logits_t"])                               # text->z->text
     ce_i = masked_ce(out["logits_i"])                              # image->z->text
 
-    mean_t, logvar_t = out["mean_t"], out["logvar_t"]
+    # KL in fp32: logvar.exp() overflows fp16 (exp(20) >> 65504) under AMP.
+    mean_t, logvar_t = out["mean_t"].float(), out["logvar_t"].float()
     kl = -0.5 * torch.mean(1 + logvar_t - mean_t.pow(2) - logvar_t.exp())
 
     # image must faithfully carry z: re-encoding the generated image returns z_t,
